@@ -1,0 +1,10 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {"Effect": "Allow", "Action": ["s3:GetBucketLocation"], "Resource": "arn:aws:s3:::YOUR_BUCKET"},
+    {"Effect": "Allow", "Action": ["s3:ListBucket"], "Resource": "arn:aws:s3:::YOUR_BUCKET",
+      "Condition": {"StringLike": {"s3:prefix": ["churn-poc/*"]}}},
+    {"Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+      "Resource": "arn:aws:s3:::YOUR_BUCKET/churn-poc/*"}
+  ]
+}
