@@ -1,0 +1,7 @@
+pyspark==3.5.6
+mlflow==2.22.0
+boto3==1.37.38
+snowflake-connector-python==3.14.0
+pyarrow==19.0.1
+numpy==1.26.4
+sqlalchemy==2.0.40

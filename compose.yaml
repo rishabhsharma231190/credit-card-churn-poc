@@ -1,0 +1,120 @@
+x-common: &common
+  image: ${CHURN_IMAGE:-credit-card-churn:0.1}
+  build: .
+  env_file: .env
+  environment: &environment
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${POSTGRES_PASSWORD}@postgres/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__CORE__PARALLELISM: "1"
+    AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: "1"
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET_KEY}
+    AIRFLOW__WEBSERVER__DEFAULT_UI_TIMEZONE: Asia/Kolkata
+    MLFLOW_TRACKING_URI: http://mlflow:5000
+    WORK_ROOT: /opt/airflow/work
+    PYTHONPATH: /opt/churn
+    SPARK_LOCAL_IP: 127.0.0.1
+  volumes:
+    - work:/opt/airflow/work
+    - airflow-logs:/opt/airflow/logs
+    - ./secrets:/opt/airflow/secrets:ro
+  depends_on:
+    postgres:
+      condition: service_healthy
+    mlflow:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16.8-bookworm
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 5s
+      retries: 20
+    restart: unless-stopped
+
+  mlflow:
+    image: ${CHURN_IMAGE:-credit-card-churn:0.1}
+    build: .
+    user: "50000:0"
+    entrypoint: /opt/churn-venv/bin/mlflow
+    command: server --host 0.0.0.0 --port 5000 --workers 1 --backend-store-uri sqlite:////mlflow/mlflow.db --serve-artifacts --artifacts-destination /mlartifacts
+    volumes:
+      - mlflow-db:/mlflow
+      - mlflow-artifacts:/mlartifacts
+    ports:
+      - "127.0.0.1:5000:5000"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:5000/health"]
+      interval: 10s
+      retries: 30
+    restart: unless-stopped
+
+  permissions:
+    image: ${CHURN_IMAGE:-credit-card-churn:0.1}
+    build: .
+    user: "0:0"
+    entrypoint: /bin/bash
+    command: ["-c", "chown -R 50000:0 /opt/airflow/work /opt/airflow/logs /mlflow /mlartifacts && chmod -R g+rwX /opt/airflow/work /opt/airflow/logs /mlflow /mlartifacts"]
+    volumes:
+      - work:/opt/airflow/work
+      - airflow-logs:/opt/airflow/logs
+      - mlflow-db:/mlflow
+      - mlflow-artifacts:/mlartifacts
+    restart: "no"
+
+  airflow-init:
+    <<: *common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        set -e
+        airflow db migrate
+        if ! airflow users list --output json | /opt/churn-venv/bin/python -c 'import json,sys,os; sys.exit(0 if any(u["username"] == os.environ["AIRFLOW_ADMIN_USER"] for u in json.load(sys.stdin)) else 1)'; then
+          airflow users create --username "$${AIRFLOW_ADMIN_USER}" --password "$${AIRFLOW_ADMIN_PASSWORD}" --firstname POC --lastname Admin --role Admin --email poc@example.invalid
+        fi
+    restart: "no"
+
+  airflow-webserver:
+    <<: *common
+    command: webserver
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 15s
+      retries: 20
+
+  airflow-scheduler:
+    <<: *common
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --local"]
+      interval: 20s
+      timeout: 15s
+      start_period: 30s
+      retries: 10
+
+  runner:
+    <<: *common
+    profiles: ["tools"]
+    entrypoint: /opt/churn-venv/bin/python
+    command: -m churn.cli --help
+    restart: "no"
+
+volumes:
+  postgres-data:
+  work:
+  airflow-logs:
+  mlflow-db:
+  mlflow-artifacts:
