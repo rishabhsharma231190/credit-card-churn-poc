@@ -1,0 +1,20 @@
+{
+  "model_uri": "models:/credit_card_churn/1",
+  "version": "1",
+  "mlflow_run_id": "6504cf1c5ae84cb286d8f45d62dd4eef",
+  "threshold": 0.3,
+  "feature_version": "v1",
+  "test_metrics": {
+    "precision": 0.5152859141901668,
+    "recall": 0.5997184420459878,
+    "f1": 0.5543053960964408,
+    "prevalence": 0.18142164620099757,
+    "areaUnderROC": 0.8428118196740968,
+    "areaUnderPR": 0.5685813479533772
+  },
+  "split_counts": {
+    "train": 1599809,
+    "validation": 200507,
+    "test": 199684
+  }
+}

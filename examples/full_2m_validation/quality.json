@@ -1,0 +1,10 @@
+{
+  "train": {
+    "rows": 2000000,
+    "columns": 13
+  },
+  "score": {
+    "rows": 2000000,
+    "columns": 12
+  }
+}

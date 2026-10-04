@@ -1,0 +1,26 @@
+[
+  {
+    "stage": "ingest",
+    "seconds": 10.69
+  },
+  {
+    "stage": "export",
+    "seconds": 0.0
+  },
+  {
+    "stage": "prepare",
+    "seconds": 15.39
+  },
+  {
+    "stage": "features",
+    "seconds": 10.06
+  },
+  {
+    "stage": "train",
+    "seconds": 27.47
+  },
+  {
+    "stage": "score",
+    "seconds": 15.13
+  }
+]
