@@ -1,0 +1,116 @@
+name: Churn CI and CD
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install and test Python
+        env:
+          SPARK_LOCAL_IP: 127.0.0.1
+          SPARK_MASTER: local[2]
+          SPARK_DRIVER_MEMORY: 1g
+          PYTHONPATH: .
+        run: |
+          python -m pip install -r requirements.txt pytest==8.3.5 PyYAML==6.0.2
+          python -m compileall -q churn dags scripts
+          python scripts/check_ci_contract.py
+          python -m pytest -q tests
+      - name: Initialize disposable CI configuration
+        run: |
+          python scripts/init_env.py
+          sed -i 's/SPARK_DRIVER_MEMORY=4g/SPARK_DRIVER_MEMORY=2g/; s/SPARK_MASTER=local\[4\]/SPARK_MASTER=local[2]/' .env
+      - name: Build the application image
+        run: docker build --build-arg CODE_COMMIT="$GITHUB_SHA" -t credit-card-churn:0.1 .
+      - name: Start and validate the container stack
+        run: |
+          docker compose run --rm --no-deps permissions
+          docker compose up -d --wait postgres mlflow
+          docker compose run --rm airflow-init
+          docker compose run --rm --entrypoint python airflow-init -c "from airflow.models import DagBag; b=DagBag('/opt/airflow/dags'); assert not b.import_errors, b.import_errors; assert 'credit_card_churn_poc' in b.dags"
+          docker compose up -d --wait airflow-webserver airflow-scheduler
+          bash scripts/run_local.sh 5000 ci_smoke
+      - name: Capture logs on failure
+        if: failure()
+        run: docker compose logs --tail 100
+      - name: Stop disposable stack
+        if: always()
+        run: docker compose down -v --remove-orphans
+      - name: Export the exact tested image
+        if: github.event_name == 'push' && vars.ENABLE_DEPLOY == 'true'
+        run: docker save credit-card-churn:0.1 | gzip -1 > /tmp/churn-image.tar.gz
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push' && vars.ENABLE_DEPLOY == 'true'
+        with:
+          name: tested-image
+          path: /tmp/churn-image.tar.gz
+          retention-days: 1
+          compression-level: 0
+
+  deploy:
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.ENABLE_DEPLOY == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: poc-aws
+    concurrency:
+      group: churn-poc-aws-deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      DEPLOY_BUCKET: ${{ vars.DEPLOY_BUCKET }}
+      EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject superseded main release
+        run: |
+          current=$(git ls-remote origin refs/heads/main | cut -f1)
+          test "$current" = "$GITHUB_SHA" || { echo "Superseded main commit; deploy the current workflow instead."; exit 1; }
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v4
+        with:
+          name: tested-image
+          path: /tmp
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+      - name: Push tested image and deploy by digest
+        env:
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+          docker load -i /tmp/churn-image.tar.gz
+          release_id="${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          tag="${ECR_REGISTRY}/${ECR_REPOSITORY}:${release_id}"
+          docker tag credit-card-churn:0.1 "$tag"
+          docker push "$tag"
+          digest=$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" --image-ids "imageTag=$release_id" --query 'imageDetails[0].imageDigest' --output text)
+          tar -czf /tmp/release.tar.gz compose.yaml scripts/deploy_ec2.sh
+          aws s3 cp /tmp/release.tar.gz "s3://${DEPLOY_BUCKET}/churn-poc/deployments/${release_id}/release.tar.gz"
+          python -m pip install boto3==1.37.38
+          python scripts/deploy_ssm.py --release "$release_id" --image "${ECR_REGISTRY}/${ECR_REPOSITORY}@${digest}"
