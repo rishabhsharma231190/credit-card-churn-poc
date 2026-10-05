@@ -19,8 +19,9 @@
     },
     "InstanceType": {
       "Type": "String",
-      "Default": "m6i.2xlarge",
+      "Default": "m7i-flex.large",
       "AllowedValues": [
+        "m7i-flex.large",
         "m6i.xlarge",
         "m6i.2xlarge",
         "r6i.xlarge"
