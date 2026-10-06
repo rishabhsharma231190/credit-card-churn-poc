@@ -50,8 +50,8 @@ changed=1
 cp "$release_dir/compose.yaml" compose.yaml
 export CHURN_IMAGE="$image"
 docker compose up -d --no-build --wait postgres mlflow
-docker compose run --rm --no-build airflow-init
-docker compose run --rm --no-build --entrypoint python airflow-init -c "from airflow.models import DagBag; b=DagBag('/opt/airflow/dags'); assert not b.import_errors, b.import_errors; assert 'credit_card_churn_poc' in b.dags"
+docker compose run --rm --pull never airflow-init
+docker compose run --rm --pull never --entrypoint python airflow-init -c "from airflow.models import DagBag; b=DagBag('/opt/airflow/dags'); assert not b.import_errors, b.import_errors; assert 'credit_card_churn_poc' in b.dags"
 docker compose up -d --no-build --wait airflow-webserver airflow-scheduler
 printf '%s\n' "$image" > .deployed-image
 # Persist the image selection for later manual Compose commands/reboots.
