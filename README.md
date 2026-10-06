@@ -172,3 +172,5 @@ The project now includes `.github/workflows/ci-cd.yml`. Pull requests run tests 
 - `docs/DEADLINE_PLAN.md`: priorities before your demo.
 - `docs/VALIDATION.md`: exact checks performed by ChatGPT and their limits.
 - `docs/SOURCES.md`: official references.
+
+AWS deployment uses GitHub Actions, Amazon ECR, and AWS Systems Manager.
