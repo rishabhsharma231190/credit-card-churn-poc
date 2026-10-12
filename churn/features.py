@@ -10,7 +10,7 @@ def engineer(df):
 
 def features(cfg, spark, store):
     prepared = store.fetch("prepared")
-    for kind in ("train", "score"):
+    for kind in cfg.datasets:
         df = engineer(spark.read.parquet(str(prepared/kind)))
         if kind == "train":
             # Deterministic customer holdout; label NEVER enters this split or features.

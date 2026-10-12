@@ -28,7 +28,7 @@ def clean(df, labeled):
 def prepare(cfg, spark, store):
     raw = store.fetch("raw")
     report = {}
-    for kind in ("train", "score"):
+    for kind in cfg.datasets:
         df = clean(spark.read.parquet(str(raw/kind)), kind == "train").cache()
         count = df.count()
         if count != cfg.rows:

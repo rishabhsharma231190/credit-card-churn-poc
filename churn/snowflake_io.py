@@ -25,6 +25,45 @@ def table(cfg, kind):
     suffix = hashlib.sha256(cfg.run_id.encode()).hexdigest()[:16].upper()
     return f"POC_{kind.upper()}_{suffix}"
 
+def existing_score_table():
+    value = os.getenv("SNOWFLAKE_SCORE_TABLE", "").strip()
+    if not value:
+        raise ValueError("Set SNOWFLAKE_SCORE_TABLE to an existing scoring table; no table will be generated")
+    parts = value.split(".")
+    if not 1 <= len(parts) <= 3:
+        raise ValueError("Expected TABLE, SCHEMA.TABLE, or DATABASE.SCHEMA.TABLE")
+    return ".".join(identifier(part) for part in parts)
+
+def export_existing(cfg, store):
+    """Read a configured table without CREATE, INSERT, UPDATE, or DELETE in Snowflake."""
+    from .config import BASE_FEATURES
+    source = existing_score_table()
+    integration = identifier(os.environ["SNOWFLAKE_STORAGE_INTEGRATION"])
+    cols = ['customer_id::BIGINT AS "customer_id"', 'as_of_date::DATE AS "as_of_date"']
+    cols += [f'{c}::DOUBLE AS "{c}"' for c in BASE_FEATURES]
+    uri = f"s3://{cfg.bucket}/{cfg.key('raw')}score/"
+    with connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT COUNT(*) FROM {source}")
+            count = cur.fetchone()[0]
+            if count != cfg.rows:
+                raise ValueError(f"Source {source}: expected {cfg.rows} rows, got {count}")
+            # Clear only this run's export before retrying; source table is untouched.
+            store.clear_remote("raw")
+            cur.execute(f"""COPY INTO '{uri}' FROM (SELECT {', '.join(cols)} FROM {source})
+                STORAGE_INTEGRATION = {integration}
+                FILE_FORMAT = (TYPE=PARQUET COMPRESSION=SNAPPY)
+                HEADER=TRUE MAX_FILE_SIZE=134217728 INCLUDE_QUERY_ID=TRUE""")
+            query_id = cur.sfqid
+    # Preserve the source dates; SCORE_AS_OF must not relabel an existing snapshot.
+    store.s3.put_object(Bucket=cfg.bucket, Key=cfg.key("raw") + "_READY", Body=b"")
+    store.write_json("source", "manifest.json", {
+        "source_table": source, "rows": count, "copy_query_id": query_id,
+        "raw_uri": uri, "pipeline_run_id": cfg.run_id,
+    })
+    store.publish("source")
+    print(f"Exported {count} existing rows from {source} to {uri}")
+
 def synthetic_sql(cfg, kind, day):
     # All identifiers are validated and dates parsed before interpolation.
     day = date.fromisoformat(day).isoformat()
