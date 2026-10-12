@@ -8,6 +8,7 @@ COPY requirements.txt /tmp/churn-requirements.txt
 RUN /opt/churn-venv/bin/pip install --no-cache-dir -r /tmp/churn-requirements.txt
 COPY --chown=airflow:root churn /opt/churn/churn
 COPY --chown=airflow:root dags /opt/airflow/dags
+COPY --chown=airflow:root scripts /opt/churn/scripts
 ENV PYTHONPATH=/opt/churn PYSPARK_PYTHON=/opt/churn-venv/bin/python
 ARG CODE_COMMIT=local
 ENV CODE_COMMIT=${CODE_COMMIT}

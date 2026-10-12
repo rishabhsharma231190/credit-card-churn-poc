@@ -12,6 +12,8 @@ flock -n 9 || { echo "Another deployment is active"; exit 1; }
 registry="${image%%/*}"
 aws ecr get-login-password --region "$region" | docker login --username AWS --password-stdin "$registry"
 docker pull "$image"
+# Validate required scoring configuration before touching the running services.
+docker run --rm --env-file .env --entrypoint /opt/churn-venv/bin/python "$image" -c "import os; from churn.snowflake_io import existing_score_table; existing_score_table() if os.getenv('PIPELINE_MODE') == 'cloud' else None"
 old_image=$(cat .deployed-image 2>/dev/null || printf '%s' 'credit-card-churn:0.1')
 export CHURN_IMAGE="$old_image"
 # Runtime upgrades need a planned DB migration/backup; do not roll them back blindly.

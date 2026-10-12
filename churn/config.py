@@ -14,6 +14,11 @@ class Config:
     run_id: str
     mode: str
     rows: int
+    scoring_only: bool = False
+
+    @property
+    def datasets(self):
+        return ("score",) if self.scoring_only else ("train", "score")
 
     def __post_init__(self):
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", self.run_id):
