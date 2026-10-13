@@ -141,7 +141,8 @@ def health(after):
     last_error = None
     for _ in range(40):
         try:
-            run(["systemctl", "is-active", "--quiet", *SERVICES], timeout=10)
+            for service in SERVICES:
+                run(["systemctl", "is-active", "--quiet", service], timeout=10)
             with urlopen("http://127.0.0.1:8080/health", timeout=3) as response:
                 status = json.load(response)
             from datetime import datetime
@@ -165,7 +166,8 @@ def deploy(release):
                 "MLFLOW_TRACKING_URI": "http://127.0.0.1:5000", "TRAIN_MODEL": "false"}
     if any(env.get(key) != value for key, value in required.items()):
         raise RuntimeError("Host settings do not match the completed native migration")
-    run(["systemctl", "is-active", "--quiet", "postgresql", *SERVICES], timeout=15)
+    for service in ["postgresql", *SERVICES]:
+        run(["systemctl", "is-active", "--quiet", service], timeout=15)
     version = run([AIRFLOW_PYTHON, "-c",
                    "import importlib.metadata; print(importlib.metadata.version('apache-airflow'))"],
                   env, capture=True)
