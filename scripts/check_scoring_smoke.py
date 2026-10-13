@@ -16,7 +16,8 @@ root = Path(os.environ["WORK_ROOT"])
 target = root / "ci_score_only"
 assert not target.exists(), "Use this script only in a disposable CI environment"
 shutil.copytree(root / "ci_smoke" / "raw" / "score", target / "raw" / "score")
-subprocess.run(["bash", "/opt/churn/scripts/run_scoring.sh", "all", "ci_score_only", "local"],
+script = Path(__file__).resolve().parent / "run_scoring.sh"
+subprocess.run(["bash", str(script), "all", "ci_score_only", "local"],
                check=True, env=dict(os.environ, ROWS="5000"))
 manifest = json.loads((target / "model/manifest.json").read_text())
 summary = json.loads((target / "scores/summary.json").read_text())
