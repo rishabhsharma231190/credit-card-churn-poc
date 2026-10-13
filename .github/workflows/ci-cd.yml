@@ -4,71 +4,71 @@ on:
     branches: [main]
   push:
     branches: [main]
+  workflow_dispatch:
 permissions:
   contents: read
 
 jobs:
   verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 45
+    env:
+      SPARK_LOCAL_IP: 127.0.0.1
+      SPARK_MASTER: local[2]
+      SPARK_DRIVER_MEMORY: 1g
+      PYTHONPATH: .
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: pip
+          cache-dependency-path: requirements-native.lock
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-      - name: Install and test Python
+      - name: Install pinned application and separate Airflow environments
+        run: |
+          python -m venv "$RUNNER_TEMP/churn-app"
+          "$RUNNER_TEMP/churn-app/bin/python" -m pip install -r requirements-native.lock
+          "$RUNNER_TEMP/churn-app/bin/python" -m pip install pytest==8.3.5 -c requirements-native.lock
+          "$RUNNER_TEMP/churn-app/bin/python" -m pip check
+          python -m venv "$RUNNER_TEMP/churn-airflow"
+          "$RUNNER_TEMP/churn-airflow/bin/python" -m pip install 'apache-airflow[postgres]==2.10.5' \
+            --constraint https://raw.githubusercontent.com/apache/airflow/constraints-2.10.5/constraints-3.11.txt
+          "$RUNNER_TEMP/churn-airflow/bin/python" -m pip check
+          echo "CHURN_PYTHON=$RUNNER_TEMP/churn-app/bin/python" >> "$GITHUB_ENV"
+      - name: Validate code and deployment safeguards
+        run: |
+          "$CHURN_PYTHON" -m compileall -q churn dags scripts
+          bash -n scripts/run_scoring.sh scripts/ci_native.sh
+          "$CHURN_PYTHON" scripts/check_ci_contract.py
+          "$CHURN_PYTHON" -m pytest -q tests
+      - name: Parse the five-task DAG with native Airflow
         env:
-          SPARK_LOCAL_IP: 127.0.0.1
-          SPARK_MASTER: local[2]
-          SPARK_DRIVER_MEMORY: 1g
-          PYTHONPATH: .
+          AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
         run: |
-          python -m pip install -r requirements.txt pytest==8.3.5 PyYAML==6.0.2
-          python -m compileall -q churn dags scripts
-          python scripts/check_ci_contract.py
-          python -m pytest -q tests
-      - name: Initialize disposable CI configuration
+          export AIRFLOW_HOME="$RUNNER_TEMP/airflow-check"
+          "$RUNNER_TEMP/churn-airflow/bin/airflow" db migrate
+          "$RUNNER_TEMP/churn-airflow/bin/python" -c "from airflow.models import DagBag; b=DagBag('dags', include_examples=False); assert not b.import_errors, b.import_errors; assert set(b.dags['credit_card_churn_poc'].task_ids) == {'resolve_model','export_existing','prepare','features','score'}"
+      - name: Native PySpark and champion-reuse smoke test
+        run: bash scripts/ci_native.sh
+      - name: Package verified source
         run: |
-          python scripts/init_env.py
-          sed -i 's/SPARK_DRIVER_MEMORY=4g/SPARK_DRIVER_MEMORY=2g/; s/SPARK_MASTER=local\[4\]/SPARK_MASTER=local[2]/' .env
-      - name: Build the application image
-        run: docker build --build-arg CODE_COMMIT="$GITHUB_SHA" -t credit-card-churn:0.1 .
-      - name: Start and validate the container stack
-        run: |
-          docker compose run --rm --no-deps permissions
-          docker compose up -d --wait postgres mlflow
-          docker compose run --rm airflow-init
-          docker compose run --rm --entrypoint python airflow-init -c "from airflow.models import DagBag; b=DagBag('/opt/airflow/dags'); assert not b.import_errors, b.import_errors; assert 'credit_card_churn_poc' in b.dags"
-          docker compose up -d --wait airflow-webserver airflow-scheduler
-          bash scripts/run_local.sh 5000 ci_smoke
-          docker compose run --rm runner /opt/churn/scripts/check_scoring_smoke.py
-      - name: Capture logs on failure
-        if: failure()
-        run: docker compose logs --tail 100
-      - name: Stop disposable stack
-        if: always()
-        run: docker compose down -v --remove-orphans
-      - name: Export the exact tested image
-        if: github.event_name == 'push' && vars.ENABLE_DEPLOY == 'true'
-        run: docker save credit-card-churn:0.1 | gzip -1 > /tmp/churn-image.tar.gz
+          "$CHURN_PYTHON" scripts/build_native_release.py --commit "$GITHUB_SHA" --output "$RUNNER_TEMP/native-release/release.tar.gz"
       - uses: actions/upload-artifact@v4
-        if: github.event_name == 'push' && vars.ENABLE_DEPLOY == 'true'
         with:
-          name: tested-image
-          path: /tmp/churn-image.tar.gz
-          retention-days: 1
+          name: tested-native-release
+          path: ${{ runner.temp }}/native-release/
+          retention-days: 7
           compression-level: 0
 
   deploy:
     needs: verify
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.ENABLE_DEPLOY == 'true'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.ENABLE_DEPLOY == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 50
     environment: poc-aws
     concurrency:
       group: churn-poc-aws-deploy
@@ -78,7 +78,6 @@ jobs:
       id-token: write
     env:
       AWS_REGION: ${{ vars.AWS_REGION }}
-      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
       DEPLOY_BUCKET: ${{ vars.DEPLOY_BUCKET }}
       EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
     steps:
@@ -86,32 +85,25 @@ jobs:
       - name: Reject superseded main release
         run: |
           current=$(git ls-remote origin refs/heads/main | cut -f1)
-          test "$current" = "$GITHUB_SHA" || { echo "Superseded main commit; deploy the current workflow instead."; exit 1; }
+          test "$current" = "$GITHUB_SHA" || { echo 'Superseded commit; deploy current main.'; exit 1; }
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - uses: actions/download-artifact@v4
         with:
-          name: tested-image
-          path: /tmp
+          name: tested-native-release
+          path: ${{ runner.temp }}/native-release
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
-      - uses: aws-actions/amazon-ecr-login@v2
-        id: ecr
-      - name: Push tested image and deploy by digest
-        env:
-          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+      - name: Upload verified source and deploy through SSM
         run: |
           set -euo pipefail
-          docker load -i /tmp/churn-image.tar.gz
+          cd "$RUNNER_TEMP/native-release"
+          digest=$(cat release.tar.gz.sha256)
+          printf '%s  %s\n' "$digest" release.tar.gz | sha256sum -c -
           release_id="${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          tag="${ECR_REGISTRY}/${ECR_REPOSITORY}:${release_id}"
-          docker tag credit-card-churn:0.1 "$tag"
-          docker push "$tag"
-          digest=$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" --image-ids "imageTag=$release_id" --query 'imageDetails[0].imageDigest' --output text)
-          tar -czf /tmp/release.tar.gz compose.yaml scripts/deploy_ec2.sh
-          aws s3 cp /tmp/release.tar.gz "s3://${DEPLOY_BUCKET}/churn-poc/deployments/${release_id}/release.tar.gz"
+          aws s3 cp release.tar.gz "s3://${DEPLOY_BUCKET}/churn-poc/deployments/${release_id}/release.tar.gz"
           python -m pip install boto3==1.37.38
-          python scripts/deploy_ssm.py --release "$release_id" --image "${ECR_REGISTRY}/${ECR_REPOSITORY}@${digest}"
+          python "$GITHUB_WORKSPACE/scripts/deploy_native_ssm.py" --release "$release_id" --sha256 "$digest"
