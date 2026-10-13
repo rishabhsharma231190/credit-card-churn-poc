@@ -1,23 +1,27 @@
 # Credit card churn: a beginner-friendly Python / PySpark POC
 
-**Goal:** generate 2,000,000 synthetic customers, prepare and engineer features in PySpark, train and register a model in MLflow, and batch-score 2,000,000 customers. Airflow orchestrates Snowflake → S3 → preparation → features → training/registration → scoring. Docker runs the jobs locally or on AWS EC2.
+**Current POC:** score 2,000,000 existing Snowflake records using the MLflow champion model. Airflow runs five shell-script tasks: resolve the champion, export the existing table to S3, prepare data, engineer features, and score. Scheduled runs do not recreate the Snowflake table, train a model, or register a new version.
 
-Start with **10,000 customers** to confirm your setup, then change one setting to run 2 million. Your target demo is **5 October 2026, 14:00 IST**. See `docs/DEADLINE_PLAN.md`.
+**Deployment:** native Python virtual environments and Linux services on EC2. GitHub Actions tests and packages source, uploads it to S3, and deploys through AWS Systems Manager. No Docker image or ECR publication is used by the current workflow. See [the native deployment guide](docs/native-deployment.md) for rollout steps, file locations and rollback behavior.
 
 ## What you are building
 
 ```mermaid
 flowchart TD
-    A[Airflow schedule] --> B[Generate synthetic snapshots in Snowflake]
-    B --> C[Unload Parquet to S3]
-    C --> D[PySpark preparation]
-    D --> E[PySpark feature engineering]
-    E --> F[Train and register in MLflow]
-    F --> G[Load exact model version and score]
-    G --> H[2 million scores in S3]
+    A[Airflow schedule] --> B[Resolve champion version]
+    B --> C[Export existing Snowflake table to S3]
+    C --> D[PySpark preparation and features]
+    D --> E[Score with pinned model version]
+    E --> F[Predictions in S3]
+    M[MLflow registry] --> B
+    M --> E
 ```
 
-The complete stack runs on one machine for the POC. Docker is the packaging; EC2 is the AWS deployment platform; Airflow is the scheduler; S3 holds data; Snowflake is the initial source; MLflow tracks experiments and model versions. This is **batch deployment**, not a public real-time prediction API.
+The complete stack runs on one EC2 machine for this POC. Airflow is the scheduler; S3 holds data; Snowflake is the source; MLflow preserves experiments, model versions and the champion alias. This is **batch deployment**.
+
+## Legacy bootstrap and Docker reference
+
+The sections below retain the original synthetic-data bootstrap, training and Docker setup instructions for reference. They are not the native production deployment procedure. For the migrated EC2 host and current CI/CD workflow, follow [docs/native-deployment.md](docs/native-deployment.md).
 
 | Step | File | Output |
 |---|---|---|
@@ -162,7 +166,7 @@ The first run requires `TRAIN_MODEL=true`. After a successful run, set `TRAIN_MO
 
 ## GitHub and automated CI/CD
 
-The project now includes `.github/workflows/ci-cd.yml`. Pull requests run tests and a Docker integration check; successful main-branch changes can deploy the tested image to EC2 through ECR and SSM. Follow `docs/GITHUB_CICD.md` for the initial repository, branch controls and AWS OIDC setup. Deployment is disabled until you set `ENABLE_DEPLOY=true` after configuring your account. Your `py scripts/init_env.py` step is unchanged. Keep an existing `.env` when updating these source files.
+The current `.github/workflows/ci-cd.yml` runs native tests and packages source for S3/SSM deployment to EC2. Follow [docs/native-deployment.md](docs/native-deployment.md). The earlier `docs/GITHUB_CICD.md` describes the legacy Docker/ECR setup; its repository and OIDC concepts remain useful, but its image deployment instructions are superseded. Keep `ENABLE_DEPLOY=false` during the migration review.
 
 ## Where to go next
 
@@ -172,5 +176,3 @@ The project now includes `.github/workflows/ci-cd.yml`. Pull requests run tests 
 - `docs/DEADLINE_PLAN.md`: priorities before your demo.
 - `docs/VALIDATION.md`: exact checks performed by ChatGPT and their limits.
 - `docs/SOURCES.md`: official references.
-
-AWS deployment uses GitHub Actions, Amazon ECR, and AWS Systems Manager.
