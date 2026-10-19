@@ -27,3 +27,7 @@ assert not (target / "features/train").exists()
 assert {v.version for v in client.search_model_versions(f"name='{name}'")} == before
 assert client.get_model_version_by_alias(name, "champion").version == champion
 print("Scoring-only smoke passed: 5000 rows; champion and registry versions unchanged")
+
+quality = json.loads((target / "data_quality/report.json").read_text())
+assert quality["status"] == "passed"
+assert quality["datasets"]["score"]["rows"] == 5000
