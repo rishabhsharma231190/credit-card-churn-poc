@@ -18,7 +18,7 @@ with DAG(
     tags=["poc", "pyspark", "churn"],
 ) as dag:
     previous = None
-    for stage in ["resolve_model", "export_existing", "prepare", "features", "score"]:
+    for stage in ["resolve_model", "export_existing", "data_quality", "prepare", "features", "score"]:
         task = BashOperator(
             task_id=stage,
             # ts_nodash uniquely scopes each run; retries intentionally reuse it.
