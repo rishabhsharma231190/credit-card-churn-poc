@@ -45,13 +45,13 @@ jobs:
           bash -n scripts/run_scoring.sh scripts/ci_native.sh
           "$CHURN_PYTHON" scripts/check_ci_contract.py
           "$CHURN_PYTHON" -m pytest -q tests
-      - name: Parse the five-task DAG with native Airflow
+      - name: Parse the six-task DAG with native Airflow
         env:
           AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
         run: |
           export AIRFLOW_HOME="$RUNNER_TEMP/airflow-check"
           "$RUNNER_TEMP/churn-airflow/bin/airflow" db migrate
-          "$RUNNER_TEMP/churn-airflow/bin/python" -c "from airflow.models import DagBag; b=DagBag('dags', include_examples=False); assert not b.import_errors, b.import_errors; assert set(b.dags['credit_card_churn_poc'].task_ids) == {'resolve_model','export_existing','prepare','features','score'}"
+          "$RUNNER_TEMP/churn-airflow/bin/python" -c "from airflow.models import DagBag; b=DagBag('dags', include_examples=False); assert not b.import_errors, b.import_errors; assert set(b.dags['credit_card_churn_poc'].task_ids) == {'resolve_model','export_existing','data_quality','prepare','features','score'}"
       - name: Native PySpark and champion-reuse smoke test
         run: bash scripts/ci_native.sh
       - name: Package verified source
