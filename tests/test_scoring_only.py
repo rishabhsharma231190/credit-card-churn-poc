@@ -93,7 +93,8 @@ def test_shell_runs_only_scoring_stages_and_propagates_failure(tmp_path):
     result = subprocess.run(["bash", str(script), "all", "run_1", "cloud"], env=env, capture_output=True)
     assert result.returncode != 0
     calls = (tmp_path / "calls").read_text().splitlines()
-    assert len(calls) == 3
+    assert len(calls) == 4
+    assert 'data_quality' in calls[2]
     assert all("--scoring-only" in call for call in calls)
     assert "resolve_model" in calls[0] and "export_existing" in calls[1]
     assert not any(" train " in call or " ingest " in call for call in calls)

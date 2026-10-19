@@ -199,7 +199,7 @@ from airflow.models import DagBag
 bag = DagBag(sys.argv[1], include_examples=False)
 assert not bag.import_errors, bag.import_errors
 dag = bag.get_dag("credit_card_churn_poc")
-assert set(dag.task_ids) == {"resolve_model", "export_existing", "prepare", "features", "score"}
+assert set(dag.task_ids) == {"resolve_model", "export_existing", "data_quality", "prepare", "features", "score"}
 ''', str(release / "dags")], candidate_env, timeout=120)
     before = registry_snapshot(candidate_env, str(candidate / "bin/python"))
 
