@@ -4,7 +4,7 @@ import time
 from .config import Config
 from .storage import Store
 
-STAGES = ["ingest", "export", "prepare", "features", "train", "score"]
+STAGES = ["ingest", "export", "data_quality", "prepare", "features", "train", "score"]
 
 def main():
     parser = argparse.ArgumentParser()
